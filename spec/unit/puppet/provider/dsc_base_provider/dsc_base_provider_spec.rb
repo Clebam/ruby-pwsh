@@ -560,7 +560,7 @@ RSpec.describe Puppet::Provider::DscBaseProvider do
             validation_mode: 'property',
             dsc_bindinginfo: [
               {
-                'hostname' => 'machin.fr',
+                'hostname' => 'contoso.com',
                 'protocol' => 'http',
                 'port' => 80
               }
@@ -579,7 +579,7 @@ RSpec.describe Puppet::Provider::DscBaseProvider do
 
         it 'ignores optional CIM fields omitted from the manifest' do
           actual = should_hash[:dsc_bindinginfo].first.merge(
-            'bindinginformation' => '*:80:machin.fr',
+            'bindinginformation' => '*:80:contoso.com',
             'certificatestorename' => nil,
             'sslflags' => '0'
           )
@@ -591,6 +591,57 @@ RSpec.describe Puppet::Provider::DscBaseProvider do
         end
       end
 
+
+      context 'when the property is an embedded CIM instance array' do
+        let(:property_name) { :dsc_bindinginfo }
+        let(:should_hash) do
+          {
+            name: 'foo',
+            validation_mode: 'property',
+            dsc_bindinginfo: [
+              {
+                'hostname' => 'contoso.com',
+                'protocol' => 'http',
+                'port' => 80
+              }
+            ]
+          }
+        end
+
+        before do
+          allow(type).to receive(:attributes).and_return(
+            dsc_bindinginfo: {
+              mof_type: 'DSC_WebBindingInformation[]',
+              mof_is_embedded: true
+            }
+          )
+        end
+
+        it 'returns true when DSC adds optional fields to an embedded hash' do
+          actual_binding = {
+            'bindinginformation' => '*:80:contoso.com',
+            'certificatestorename' => nil,
+            'certificatesubject' => nil,
+            'certificatethumbprint' => nil,
+            'hostname' => 'contoso.com',
+            'ipaddress' => '*',
+            'port' => 80,
+            'protocol' => 'http',
+            'sslflags' => '0'
+          }
+
+          allow(provider).to receive(:get_cached_fresh_state).and_return(
+            name: 'foo',
+            dsc_bindinginfo: [actual_binding]
+          )
+
+          result = provider.send(
+            :insync?, context, name, property_name, {}, should_hash
+          )
+
+          expect(result).to be true
+        end
+      end
       context 'when values differ' do
         it 'returns [false, change_message] and sets insync_property_cache' do
           differing_fresh = { name: 'foo', dsc_setting: 'Bar' }
