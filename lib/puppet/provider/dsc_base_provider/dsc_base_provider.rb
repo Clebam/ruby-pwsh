@@ -491,7 +491,7 @@ class Puppet::Provider::DscBaseProvider # rubocop:disable Metrics/ClassLength
   # @param is_value [Object] the current value from a fresh DSC Get
   # @param should_value [Object] the desired value from the Puppet manifest
   # @return [Boolean] true if the values are equivalent
-  def values_equal?(is_value, should_value)
+  def values_equal?(is_value, should_value, embedded: false)
     return true if is_value == should_value
 
     # Handle nil/empty equivalence
@@ -499,9 +499,56 @@ class Puppet::Provider::DscBaseProvider # rubocop:disable Metrics/ClassLength
     should_empty = should_value.nil? || (should_value.respond_to?(:empty?) && should_value.empty?)
     return true if is_empty && should_empty
 
+    # DSC Get returns optional fields omitted from the manifest for embedded
+    # CIM instances. Treat desired hashes as partial hashes in this case.
+    return embedded_value_equal?(is_value, should_value) if embedded
+
     # Normalize and compare: sort for order-insensitive array/hash comparison,
     # downcase for case-insensitive string comparison, handles nested structures.
     same?(recursively_downcase(is_value), recursively_downcase(should_value))
+  end
+
+  # Recursively compare an embedded CIM value. Additional keys returned by DSC
+  # are ignored because they were not explicitly managed by the manifest.
+  def embedded_value_equal?(actual, desired)
+    case desired
+    when Hash
+      return false unless actual.is_a?(Hash)
+
+      desired.all? do |desired_key, desired_value|
+        actual_key = actual.keys.find do |key|
+          key.to_s.casecmp?(desired_key.to_s)
+        end
+
+        !actual_key.nil? &&
+          embedded_value_equal?(actual[actual_key], desired_value)
+      end
+    when Array
+      return false unless actual.is_a?(Array)
+      return false unless actual.length == desired.length
+
+      embedded_arrays_equal?(actual, desired)
+    else
+      same?(
+        recursively_downcase(actual),
+        recursively_downcase(desired)
+      )
+    end
+  end
+
+  # Match array entries one-to-one without depending on their order. Removing
+  # each matched actual entry also handles duplicate entries correctly.
+  def embedded_arrays_equal?(actual, desired)
+    return true if desired.empty?
+
+    desired_value = desired.first
+    actual.each_index.any? do |index|
+      next false unless embedded_value_equal?(actual[index], desired_value)
+
+      remaining_actual = actual.dup
+      remaining_actual.delete_at(index)
+      embedded_arrays_equal?(remaining_actual, desired.drop(1))
+    end
   end
 
   # Determine if the DSC Resource is in the desired state, using fresh DSC Get
@@ -592,7 +639,10 @@ class Puppet::Provider::DscBaseProvider # rubocop:disable Metrics/ClassLength
     end
 
     fresh_value = fresh_state[property_name]
-    return true if values_equal?(fresh_value, should_value)
+    attribute = context.type.attributes[property_name] || {}
+    embedded = attribute[:mof_is_embedded] == true
+
+    return true if values_equal?(fresh_value, should_value, embedded: embedded)
 
     @insync_property_cache[property_key] = true
     [false, "#{property_name} changed '#{fresh_value}' to '#{should_value}'"]

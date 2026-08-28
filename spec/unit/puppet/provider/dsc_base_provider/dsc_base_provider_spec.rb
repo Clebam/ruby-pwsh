@@ -414,6 +414,10 @@ RSpec.describe Puppet::Provider::DscBaseProvider do
 
     before do
       allow(context).to receive(:debug)
+      allow(context).to receive(:type).and_return(type)
+      allow(type).to receive(:attributes).and_return(
+        dsc_setting: { mof_is_embedded: false }
+      )
     end
 
     context 'when the corrective check is detected' do
@@ -544,6 +548,45 @@ RSpec.describe Puppet::Provider::DscBaseProvider do
           matching_fresh = { name: 'foo', dsc_setting: 'Foo' }
           allow(provider).to receive(:get_cached_fresh_state).and_return(matching_fresh)
           result = provider.send(:insync?, context, name, :dsc_setting, is_hash, should_hash)
+          expect(result).to be true
+        end
+      end
+
+      context 'when the property is an embedded CIM instance array' do
+        let(:property_name) { :dsc_bindinginfo }
+        let(:should_hash) do
+          {
+            name: 'foo',
+            validation_mode: 'property',
+            dsc_bindinginfo: [
+              {
+                'hostname' => 'machin.fr',
+                'protocol' => 'http',
+                'port' => 80
+              }
+            ]
+          }
+        end
+
+        before do
+          allow(type).to receive(:attributes).and_return(
+            dsc_bindinginfo: {
+              mof_type: 'DSC_WebBindingInformation[]',
+              mof_is_embedded: true
+            }
+          )
+        end
+
+        it 'ignores optional CIM fields omitted from the manifest' do
+          actual = should_hash[:dsc_bindinginfo].first.merge(
+            'bindinginformation' => '*:80:machin.fr',
+            'certificatestorename' => nil,
+            'sslflags' => '0'
+          )
+          allow(provider).to receive(:get_cached_fresh_state)
+            .and_return(name: 'foo', dsc_bindinginfo: [actual])
+
+          result = provider.send(:insync?, context, name, property_name, {}, should_hash)
           expect(result).to be true
         end
       end
