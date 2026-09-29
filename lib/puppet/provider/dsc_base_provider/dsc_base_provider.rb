@@ -880,10 +880,11 @@ class Puppet::Provider::DscBaseProvider # rubocop:disable Metrics/ClassLength
       next if k == :dsc_psdscrunascredential && v.nil?
 
       resource[:parameters][k] = {}
-      resource[:parameters][k][:value] = v
       %i[mof_type mof_is_embedded].each do |ky|
         resource[:parameters][k][ky] = context.type.definition[:attributes][k][ky]
       end
+      embedded_cim = resource[:parameters][k][:mof_is_embedded] && resource[:parameters][k][:mof_type] != 'PSCredential'
+      resource[:parameters][k][:value] = embedded_cim ? remove_nil_fields(v) : v
     end
     resource[:dsc_invoke_method] = dsc_invoke_method
 
@@ -1051,6 +1052,22 @@ class Puppet::Provider::DscBaseProvider # rubocop:disable Metrics/ClassLength
   # @return [bool] returns equality
   def same?(value1, value2)
     recursively_sort(value2) == recursively_sort(value1)
+  end
+
+  # Remove nil (undef) fields from an embedded CIM instance value. DSC treats them
+  # like omitted fields, and they cannot be formatted to PowerShell.
+  #
+  # @param value [Object] the embedded CIM instance value (hash, array of hashes, or scalar)
+  # @return [Object] the value without nil hash fields, at any nesting level
+  def remove_nil_fields(value)
+    case value
+    when Hash
+      value.compact.transform_values { |field| remove_nil_fields(field) }
+    when Array
+      value.map { |item| remove_nil_fields(item) }
+    else
+      value
+    end
   end
 
   # Parses the DSC resource type definition to retrieve the names of any attributes which are specified as mandatory for get operations
