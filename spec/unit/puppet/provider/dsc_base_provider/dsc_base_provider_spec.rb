@@ -1659,6 +1659,47 @@ RSpec.describe Puppet::Provider::DscBaseProvider do
         end
       end
     end
+
+    # undef in an embedded CIM instance is not managed, and nil cannot be formatted to PowerShell
+    context 'when an embedded CIM instance has nil fields' do
+      let(:definition) do
+        super().tap do |d|
+          d[:attributes][:dsc_bindinginfo] = { type: 'Optional[Array[Struct[{}]]]', mof_type: 'DSC_WebBindingInformation[]', mof_is_embedded: true }
+          d[:attributes][:dsc_setting] = { type: 'Optional[Hash]', mof_type: 'String', mof_is_embedded: false }
+        end
+      end
+
+      it 'removes nil fields and keeps the others' do
+        should_hash[:dsc_bindinginfo] = [{ 'protocol' => 'https', 'port' => 8443, 'sslflags' => nil }]
+        expect(result[:parameters][:dsc_bindinginfo][:value]).to eq([{ 'protocol' => 'https', 'port' => 8443 }])
+      end
+
+      it 'keeps empty strings' do
+        should_hash[:dsc_bindinginfo] = [{ 'protocol' => 'https', 'certificatethumbprint' => '' }]
+        expect(result[:parameters][:dsc_bindinginfo][:value]).to eq([{ 'protocol' => 'https', 'certificatethumbprint' => '' }])
+      end
+
+      it 'removes nil fields in nested hashes' do
+        should_hash[:dsc_bindinginfo] = [{ 'name' => 'a', 'options' => { 'mode' => nil, 'level' => 1 } }]
+        expect(result[:parameters][:dsc_bindinginfo][:value]).to eq([{ 'name' => 'a', 'options' => { 'level' => 1 } }])
+      end
+
+      it 'does not change properties that are not embedded CIM instances' do
+        should_hash[:dsc_setting] = { 'a' => nil }
+        expect(result[:parameters][:dsc_setting][:value]).to eq({ 'a' => nil })
+      end
+
+      it 'does not change the should hash' do
+        should_hash[:dsc_bindinginfo] = [{ 'protocol' => 'https', 'sslflags' => nil }]
+        result
+        expect(should_hash[:dsc_bindinginfo]).to eq([{ 'protocol' => 'https', 'sslflags' => nil }])
+      end
+
+      it 'can be formatted to PowerShell' do
+        should_hash[:dsc_bindinginfo] = [{ 'protocol' => 'https', 'sslflags' => nil }]
+        expect { provider.format(result[:parameters][:dsc_bindinginfo][:value]) }.not_to raise_error
+      end
+    end
   end
 
   describe '.vendored_modules_path' do
