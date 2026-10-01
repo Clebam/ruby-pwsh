@@ -482,6 +482,51 @@ RSpec.describe Puppet::Provider::DscBaseProvider do
           expect(result).to eq([false, "dsc_setting changed 'v4.0' to ''"])
         end
       end
+
+      context 'when the canonicalize Get is cached' do
+        before do
+          allow(provider).to receive(:parameter_attributes).and_return([:dsc_psdscrunascredential])
+          provider.instance_variable_set(:@cached_test_results, [])
+        end
+
+        it 'skips DSC Test when every managed property matches the canonicalize Get' do
+          provider.instance_variable_set(:@cached_canonicalize_results, [{ name: 'foo', dsc_setting: 'Foo' }])
+          expect(provider).not_to receive(:invoke_test_method)
+          expect(provider.send(:insync?, context, name, property_name, is_hash, should_hash)).to be true
+          expect(provider.cached_test_results).to eq([{ name: 'foo', in_desired_state: true }])
+        end
+
+        it 'ignores parameters, which DSC Get does not return' do
+          provider.instance_variable_set(:@cached_canonicalize_results, [{ name: 'foo', dsc_setting: 'Foo' }])
+          should_with_param = should_hash.merge(dsc_psdscrunascredential: { 'user' => 'u', 'password' => 'p' })
+          expect(provider).not_to receive(:invoke_test_method)
+          expect(provider.send(:insync?, context, name, property_name, is_hash, should_with_param)).to be true
+        end
+
+        it 'calls DSC Test when a managed property differs' do
+          provider.instance_variable_set(:@cached_canonicalize_results, [{ name: 'foo', dsc_setting: 'Bar' }])
+          expect(provider).to receive(:invoke_test_method).and_return(true)
+          expect(provider.send(:insync?, context, name, property_name, is_hash, should_hash)).to be true
+        end
+
+        it 'calls DSC Test when a managed property is missing from the Get result' do
+          provider.instance_variable_set(:@cached_canonicalize_results, [{ name: 'foo' }])
+          expect(provider).to receive(:invoke_test_method).and_return(true)
+          expect(provider.send(:insync?, context, name, property_name, is_hash, should_hash)).to be true
+        end
+
+        it 'calls DSC Test when no Get result is cached for the resource' do
+          provider.instance_variable_set(:@cached_canonicalize_results, [{ name: 'other', dsc_setting: 'Foo' }])
+          expect(provider).to receive(:invoke_test_method).and_return(true)
+          expect(provider.send(:insync?, context, name, property_name, is_hash, should_hash)).to be true
+        end
+
+        it 'calls DSC Test when no dsc_ property is managed' do
+          provider.instance_variable_set(:@cached_canonicalize_results, [{ name: 'foo', dsc_setting: 'Foo' }])
+          expect(provider).to receive(:invoke_test_method).and_return(true)
+          provider.send(:insync?, context, name, property_name, is_hash, { name: 'foo', validation_mode: 'resource' })
+        end
+      end
     end
 
     context 'when the validation_mode is "property"' do

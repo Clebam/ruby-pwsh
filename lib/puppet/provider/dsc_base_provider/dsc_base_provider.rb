@@ -617,7 +617,14 @@ class Puppet::Provider::DscBaseProvider # rubocop:disable Metrics/ClassLength
   def insync_resource_mode(context, name, property_name, should_hash)
     should_value = should_hash.is_a?(Hash) ? should_hash[property_name] : nil
     prior_result = fetch_cached_hashes(@cached_test_results, [name])
-    test_result = prior_result.empty? ? invoke_test_method(context, name, should_hash) : prior_result.first[:in_desired_state]
+    test_result = if !prior_result.empty?
+                    prior_result.first[:in_desired_state]
+                  elsif canonicalize_get_matches_should?(context, name, should_hash)
+                    @cached_test_results << name.merge({ in_desired_state: true })
+                    true
+                  else
+                    invoke_test_method(context, name, should_hash)
+                  end
     in_sync = test_result.is_a?(Array) ? test_result.first : test_result
 
     return true if in_sync
@@ -628,6 +635,34 @@ class Puppet::Provider::DscBaseProvider # rubocop:disable Metrics/ClassLength
 
     # Fresh Get comparison for dsc_ properties with values
     compare_fresh_value(context, name, property_name, should_hash, report_on_failure: true)
+  end
+
+  # Whether the Get already made by canonicalize shows every managed property at its desired value.
+  # When it does, the DSC Test call is skipped (one DSC call instead of two for an in-sync resource).
+  # Any missing Get result, unset property list or differing value falls back on DSC Test.
+  #
+  # @param context [Object] the Puppet runtime context to operate in and send feedback to
+  # @param name [Hash] the name hash for the resource
+  # @param should_hash [Hash] the desired state hash
+  # @return [Boolean] true only when every managed dsc_ property matches the canonicalize Get result
+  def canonicalize_get_matches_should?(context, name, should_hash)
+    return false unless should_hash.is_a?(Hash)
+
+    current = fetch_cached_hashes(@cached_canonicalize_results, [name]).first
+    return false if current.nil?
+
+    parameters = parameter_attributes(context)
+    managed = should_hash.select do |key, value|
+      key.to_s.start_with?('dsc_') && !parameters.include?(key) && !skip_empty_should_value?(value)
+    end
+    return false if managed.empty?
+
+    in_sync = managed.all? do |key, value|
+      attribute = context.type.attributes[key] || {}
+      current.key?(key) && values_equal?(current[key], value, embedded: attribute[:mof_is_embedded] == true)
+    end
+    context.debug("Skipping DSC Test for '#{name}': the canonicalize Get matches every managed property") if in_sync
+    in_sync
   end
 
   # Property validation mode: only intervene for dsc_ properties with a desired value.
