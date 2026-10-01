@@ -148,6 +148,17 @@ RSpec.describe Puppet::Provider::DscBaseProvider do
           allow(provider).to receive(:enum_attributes).and_return([])
         end
 
+        context 'when the manifest resource has meta parameters with mixed casing' do
+          let(:manifest_resource) do
+            base_resource.merge({ dsc_property: 'bar', require: 'Service[MyService]', tag: ['MyTag'], alias: 'MyAlias' })
+          end
+          let(:actual_resource) { base_resource.merge({ dsc_property: 'Bar' }) }
+
+          it 'preserves the casing of the meta parameters' do
+            expect(canonicalized_resource.first).to include(require: 'Service[MyService]', tag: ['MyTag'], alias: 'MyAlias')
+          end
+        end
+
         context 'when canonicalizing property values' do
           let(:manifest_resource) { base_resource.merge({ dsc_property: 'bar' }) }
 
