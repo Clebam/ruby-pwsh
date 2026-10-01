@@ -537,6 +537,59 @@ RSpec.describe Puppet::Provider::DscBaseProvider do
           expect(provider).to receive(:invoke_test_method).and_return(true)
           provider.send(:insync?, context, name, property_name, is_hash, { name: 'foo', validation_mode: 'resource' })
         end
+
+        context 'when the type has an Ensure property' do
+          before do
+            allow(type).to receive(:attributes).and_return(dsc_setting: { mof_is_embedded: false }, dsc_ensure: {})
+          end
+
+          it 'calls DSC Test when the manifest leaves Ensure unset and Get reports Absent' do
+            provider.instance_variable_set(:@cached_canonicalize_results, [{ name: 'foo', dsc_setting: 'Foo', dsc_ensure: 'Absent' }])
+            expect(provider).to receive(:invoke_test_method).and_return(true)
+            provider.send(:insync?, context, name, property_name, is_hash, should_hash)
+          end
+
+          it 'calls DSC Test when the manifest leaves Ensure unset and Get does not return it' do
+            provider.instance_variable_set(:@cached_canonicalize_results, [{ name: 'foo', dsc_setting: 'Foo' }])
+            expect(provider).to receive(:invoke_test_method).and_return(true)
+            provider.send(:insync?, context, name, property_name, is_hash, should_hash)
+          end
+
+          it 'skips DSC Test when the manifest leaves Ensure unset and Get reports Present' do
+            provider.instance_variable_set(:@cached_canonicalize_results, [{ name: 'foo', dsc_setting: 'Foo', dsc_ensure: 'Present' }])
+            expect(provider).not_to receive(:invoke_test_method)
+            expect(provider.send(:insync?, context, name, property_name, is_hash, should_hash)).to be true
+          end
+
+          it 'skips DSC Test when the manifest sets Ensure to the Absent that Get reports' do
+            provider.instance_variable_set(:@cached_canonicalize_results, [{ name: 'foo', dsc_setting: 'Foo', dsc_ensure: 'Absent' }])
+            expect(provider).not_to receive(:invoke_test_method)
+            should_absent = should_hash.merge(dsc_ensure: 'absent')
+            expect(provider.send(:insync?, context, name, property_name, is_hash, should_absent)).to be true
+          end
+        end
+
+        context 'when the manifest sets a Required property, sent to Get with its desired value' do
+          before do
+            allow(type).to receive(:attributes).and_return(
+              dsc_name: { behaviour: :namevar, mandatory_for_get: true },
+              dsc_setting: { mof_is_embedded: false },
+              dsc_pool: { mandatory_for_get: true }
+            )
+          end
+
+          it 'calls DSC Test even when Get returns the same value' do
+            provider.instance_variable_set(:@cached_canonicalize_results, [{ name: 'foo', dsc_name: 'foo', dsc_setting: 'Foo', dsc_pool: 'P' }])
+            expect(provider).to receive(:invoke_test_method).and_return(true)
+            provider.send(:insync?, context, name, property_name, is_hash, should_hash.merge(dsc_name: 'foo', dsc_pool: 'P'))
+          end
+
+          it 'still trusts Key properties' do
+            provider.instance_variable_set(:@cached_canonicalize_results, [{ name: 'foo', dsc_name: 'foo', dsc_setting: 'Foo' }])
+            expect(provider).not_to receive(:invoke_test_method)
+            expect(provider.send(:insync?, context, name, property_name, is_hash, should_hash.merge(dsc_name: 'foo'))).to be true
+          end
+        end
       end
     end
 

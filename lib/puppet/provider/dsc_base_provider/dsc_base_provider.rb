@@ -650,6 +650,7 @@ class Puppet::Provider::DscBaseProvider # rubocop:disable Metrics/ClassLength
 
     current = fetch_cached_hashes(@cached_canonicalize_results, [name]).first
     return false if current.nil?
+    return false unless get_ensure_matches_default?(context, current, should_hash)
 
     parameters = parameter_attributes(context)
     managed = should_hash.select do |key, value|
@@ -657,12 +658,33 @@ class Puppet::Provider::DscBaseProvider # rubocop:disable Metrics/ClassLength
     end
     return false if managed.empty?
 
+    # Required properties are sent to Get with their desired value, and many resources return
+    # them unchanged instead of reading the system: their Get value proves nothing.
+    queried = mandatory_get_attributes(context) - namevar_attributes(context)
+    return false if managed.keys.any? { |key| queried.include?(key) }
+
     in_sync = managed.all? do |key, value|
       attribute = context.type.attributes[key] || {}
       current.key?(key) && values_equal?(current[key], value, embedded: attribute[:mof_is_embedded] == true)
     end
     context.debug("Skipping DSC Test for '#{name}': the canonicalize Get matches every managed property") if in_sync
     in_sync
+  end
+
+  # Whether the canonicalize Get agrees with an Ensure the manifest leaves to its default.
+  # Many resources answer Get with Ensure = 'Absent' plus their input values when the object
+  # does not exist, and DSC Test then applies the Ensure default ('Present'). So when the
+  # manifest does not set Ensure, only a Get reporting 'Present' can be trusted.
+  #
+  # @param context [Object] the Puppet runtime context to operate in and send feedback to
+  # @param current [Hash] the canonicalize Get result
+  # @param should_hash [Hash] the desired state hash
+  # @return [Boolean] false when the manifest leaves Ensure unset and Get does not report it Present
+  def get_ensure_matches_default?(context, current, should_hash)
+    return true unless context.type.attributes.key?(:dsc_ensure)
+    return true unless skip_empty_should_value?(should_hash[:dsc_ensure])
+
+    current[:dsc_ensure].to_s.casecmp?('present')
   end
 
   # Property validation mode: only intervene for dsc_ properties with a desired value.
