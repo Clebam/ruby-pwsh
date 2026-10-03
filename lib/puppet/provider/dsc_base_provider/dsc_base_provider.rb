@@ -60,7 +60,10 @@ class Puppet::Provider::DscBaseProvider # rubocop:disable Metrics/ClassLength
         # If the resource is meant to be absent, skip canonicalization and rely on the manifest
         # value; there's no reason to compare system state to desired state for casing if the
         # resource is being removed.
-        if r[:dsc_ensure] == 'absent'
+        # In resource validation mode, DSC Test decides whether the resource is in the desired state,
+        # so the casing from the system is not needed either: get() runs Test first and only calls
+        # the Get method when Test fails.
+        if r[:dsc_ensure] == 'absent' || r[:validation_mode] == 'resource'
           canonicalized = r.dup
           @cached_canonicalized_resource << r.dup
         else
@@ -170,6 +173,9 @@ class Puppet::Provider::DscBaseProvider # rubocop:disable Metrics/ClassLength
     end
     names.collect do |name|
       name = { name: name } if name.is_a? String
+      state_from_test = resource_mode_state_from_test(context, name)
+      next state_from_test unless state_from_test.nil?
+
       invoke_get_method(context, name.merge(mandatory_properties))
     end
   end
@@ -612,6 +618,26 @@ class Puppet::Provider::DscBaseProvider # rubocop:disable Metrics/ClassLength
   end
 
   private
+
+  # Resource validation mode: DSC Test decides whether the resource is in the desired state, so when it
+  # passes, the desired values are the current state and no Get call is needed (one DSC call instead of
+  # two for an in-sync resource). When Test fails, the caller falls back on the Get method, to report
+  # the differences and to choose between create, update and delete.
+  #
+  # @param context [Object] the Puppet runtime context to operate in and send feedback to
+  # @param name [Hash] the name hash for the resource
+  # @return [Hash, nil] the desired state when DSC Test passes, nil otherwise
+  def resource_mode_state_from_test(context, name)
+    should = @cached_canonicalized_resource.find do |resource|
+      resource[:validation_mode] == 'resource' && resource[:dsc_ensure] != 'absent' && (name.to_a - resource.to_a).empty?
+    end
+    return nil if should.nil?
+    return nil unless invoke_test_method(context, name, should) == true
+
+    current = should.reject { |key, _value| Puppet::Type.metaparam?(key) }
+    @cached_query_results << current.dup
+    current
+  end
 
   # Resource validation mode: DSC Test is the authority on overall sync state.
   def insync_resource_mode(context, name, property_name, should_hash)

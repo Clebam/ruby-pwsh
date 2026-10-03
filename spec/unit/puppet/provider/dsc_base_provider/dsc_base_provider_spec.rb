@@ -116,6 +116,16 @@ RSpec.describe Puppet::Provider::DscBaseProvider do
       end
     end
 
+    context 'when a manifest resource uses the resource validation mode' do
+      let(:manifest_resource) { base_resource.merge({ dsc_property: 'FooBar', validation_mode: 'resource' }) }
+      let(:cached_canonicalized_resource) { [] }
+
+      it 'keeps the manifest values without calling the Get method' do
+        expect(provider).not_to receive(:invoke_get_method_for_canonicalize)
+        expect(canonicalized_resource).to eq([manifest_resource])
+      end
+    end
+
     context 'when a manifest resource is in the canonicalized resource cache' do
       let(:manifest_resource) { base_resource.merge({ dsc_property: 'FooBar' }) }
       let(:expected_resource) { base_resource.merge({ dsc_property: 'foobar' }) }
@@ -146,6 +156,17 @@ RSpec.describe Puppet::Provider::DscBaseProvider do
         before do
           allow(provider).to receive(:parameter_attributes).and_return(parameter_keys)
           allow(provider).to receive(:enum_attributes).and_return([])
+        end
+
+        context 'when the manifest resource has meta parameters with mixed casing' do
+          let(:manifest_resource) do
+            base_resource.merge({ dsc_property: 'bar', require: 'Service[MyService]', tag: ['MyTag'], alias: 'MyAlias' })
+          end
+          let(:actual_resource) { base_resource.merge({ dsc_property: 'Bar' }) }
+
+          it 'preserves the casing of the meta parameters' do
+            expect(canonicalized_resource.first).to include(require: 'Service[MyService]', tag: ['MyTag'], alias: 'MyAlias')
+          end
         end
 
         context 'when canonicalizing property values' do
@@ -277,6 +298,41 @@ RSpec.describe Puppet::Provider::DscBaseProvider do
       expect(provider).to receive(:mandatory_get_attributes).and_return([:dsc_some_parameter]).exactly(3).times
       expect(provider).to receive(:invoke_get_method).with(context, { name: 'foo', dsc_some_parameter: 'baz' }).and_return({ name: 'foo', property: 'bar' })
       expect(provider.get(context, [{ name: 'foo' }])).to eq([{ name: 'foo', property: 'bar' }])
+    end
+  end
+
+  describe '.get in the resource validation mode' do
+    let(:should_hash) { { name: 'foo', dsc_name: 'foo', dsc_setting: 'Foo', validation_mode: 'resource', noop: true } }
+
+    before do
+      allow(context).to receive(:debug)
+      allow(provider).to receive(:mandatory_get_attributes).and_return([])
+      allow(provider).to receive(:namevar_attributes).and_return(%i[name dsc_name])
+      provider.instance_variable_set(:@cached_canonicalized_resource, [should_hash])
+    end
+
+    after do
+      provider.instance_variable_set(:@cached_canonicalized_resource, [])
+      provider.instance_variable_set(:@cached_query_results, [])
+    end
+
+    it 'returns the desired state without calling the Get method when DSC Test passes' do
+      expect(provider).to receive(:invoke_test_method).with(context, { name: 'foo' }, should_hash).and_return(true)
+      expect(provider).not_to receive(:invoke_get_method)
+      expect(provider.get(context, [{ name: 'foo' }])).to eq([should_hash.reject { |key, _value| key == :noop }])
+    end
+
+    it 'calls the Get method when DSC Test fails' do
+      expect(provider).to receive(:invoke_test_method).and_return([false, 'not in the desired state'])
+      expect(provider).to receive(:invoke_get_method).with(context, { name: 'foo' }).and_return({ name: 'foo', dsc_setting: 'Bar' })
+      expect(provider.get(context, [{ name: 'foo' }])).to eq([{ name: 'foo', dsc_setting: 'Bar' }])
+    end
+
+    it 'calls the Get method when the resource is meant to be absent' do
+      provider.instance_variable_set(:@cached_canonicalized_resource, [should_hash.merge(dsc_ensure: 'absent')])
+      expect(provider).not_to receive(:invoke_test_method)
+      expect(provider).to receive(:invoke_get_method).and_return({ name: 'foo', dsc_ensure: 'absent' })
+      provider.get(context, [{ name: 'foo' }])
     end
   end
 
