@@ -299,6 +299,14 @@ RSpec.describe Puppet::Provider::DscBaseProvider do
       expect(provider).to receive(:invoke_get_method).with(context, { name: 'foo', dsc_some_parameter: 'baz' }).and_return({ name: 'foo', property: 'bar' })
       expect(provider.get(context, [{ name: 'foo' }])).to eq([{ name: 'foo', property: 'bar' }])
     end
+
+    it 'takes the mandatory properties from the canonicalized resource with the same name' do
+      provider.instance_variable_set(:@cached_canonicalized_resource, [{ name: 'foo', dsc_path: 'C:\\foo' }, { name: 'bar', dsc_path: 'C:\\bar' }])
+      allow(context).to receive(:debug)
+      allow(provider).to receive_messages(fetch_cached_hashes: [], namevar_attributes: [:name], mandatory_get_attributes: [:dsc_path])
+      expect(provider).to receive(:invoke_get_method).with(context, { name: 'bar', dsc_path: 'C:\\bar' }).and_return({ name: 'bar' })
+      provider.get(context, [{ name: 'bar' }])
+    end
   end
 
   describe '.get in the resource validation mode' do
