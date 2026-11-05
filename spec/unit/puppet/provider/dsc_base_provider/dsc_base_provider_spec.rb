@@ -1549,10 +1549,24 @@ RSpec.describe Puppet::Provider::DscBaseProvider do
         end
 
         it 'redacts the secrets of the script, the longest first' do
-          allow(ps_manager).to receive(:execute).with(secret_script, nil).and_return({ stdout: nil, errormessage: "Bad value 'P4ss2' and 'P4ss'" })
-          expect(context).to receive(:err).with("Nothing returned. Bad value '#<Sensitive [value redacted]>' and '#<Sensitive [value redacted]>'")
+          allow(ps_manager).to receive(:execute).with(secret_script, nil).and_return({ stdout: nil, errormessage: 'Bad values P4ss2 and P4ss' })
+          expect(context).to receive(:err).with('Nothing returned. Bad values #<Sensitive [value redacted]> and #<Sensitive [value redacted]>')
           expect(result).to be_nil
         end
+
+        it 'redacts every quoted text, which may be a fragment of a secret' do
+          errormessage = "A positional parameter cannot be found that accepts argument 'ss2'."
+          allow(ps_manager).to receive(:execute).with(secret_script, nil).and_return({ stdout: nil, errormessage: errormessage })
+          expect(context).to receive(:err).with("Nothing returned. A positional parameter cannot be found that accepts argument '#<Sensitive [value redacted]>'.")
+          expect(result).to be_nil
+        end
+      end
+
+      it 'keeps the quoted texts of the PowerShell error message when the script holds no secret' do
+        errormessage = "A positional parameter cannot be found that accepts argument 'SERVICE\\SQLAgent'.\n\rAt line:1 char:5"
+        allow(ps_manager).to receive(:execute).with(script, nil).and_return({ stdout: nil, errormessage: errormessage })
+        expect(context).to receive(:err).with("Nothing returned. A positional parameter cannot be found that accepts argument 'SERVICE\\SQLAgent'.")
+        expect(result).to be_nil
       end
     end
 

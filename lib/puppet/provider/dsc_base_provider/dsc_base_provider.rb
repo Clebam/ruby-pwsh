@@ -1672,8 +1672,9 @@ class Puppet::Provider::DscBaseProvider # rubocop:disable Metrics/ClassLength
 
   # Builds the error of a DSC call which returned no data, with the first line of the PowerShell error message
   # when there is one. The next lines of a parse error quote the failing script line, possibly cut in the middle
-  # of a secret: they are dropped. Every secret value written into the script is also replaced in the kept line,
-  # the longest first so that a secret containing another one is not partly left.
+  # of a secret: they are dropped. When the script holds secrets, a parse error broken inside one of them may
+  # quote a fragment of it in the first line: every quoted text of that line is replaced, and so is every
+  # full secret value, the longest first so that a secret containing another one is not partly left.
   #
   # @param errormessage [String] the error message returned by the PowerShell manager, if any
   # @param script_content [String] the script, with its secrets still marked by SECRET_POSTFIX
@@ -1683,8 +1684,10 @@ class Puppet::Provider::DscBaseProvider # rubocop:disable Metrics/ClassLength
     return 'Nothing returned.' if first_line.nil?
 
     secrets = script_content.scan(SECRET_DATA_REGEX).flatten.compact.uniq.sort_by { |secret| -secret.length }
+    return "Nothing returned. #{first_line.strip}" if secrets.empty?
+
     redacted = secrets.reduce(first_line.strip) { |text, secret| text.gsub(secret, '#<Sensitive [value redacted]>') }
-    "Nothing returned. #{redacted}"
+    "Nothing returned. #{redacted.gsub(/'[^']*'/, "'#<Sensitive [value redacted]>'")}"
   end
 
   # While Puppet is aware of Sensitive data types, the PowerShell script is not
