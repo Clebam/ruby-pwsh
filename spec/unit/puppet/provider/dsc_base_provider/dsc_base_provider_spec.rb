@@ -1532,14 +1532,27 @@ RSpec.describe Puppet::Provider::DscBaseProvider do
         expect(result).to be_nil
       end
 
-      it 'adds the PowerShell error message without the secrets of the script' do
-        secret_script = "$cred = New-PSCredential -User 'foo' -Password 'P4ss#PuppetSensitive'"
-        allow(provider).to receive(:ps_script_content).with(resource).and_return(secret_script)
-        allow(provider).to receive(:redact_secrets).with(secret_script)
-        allow(provider).to receive(:remove_secret_identifiers).with(secret_script).and_return(secret_script)
-        allow(ps_manager).to receive(:execute).with(secret_script, nil).and_return({ stdout: nil, errormessage: "Parse error at -Password 'P4ss'" })
-        expect(context).to receive(:err).with("Nothing returned. Parse error at -Password '#<Sensitive [value redacted]>'")
-        expect(result).to be_nil
+      context 'with a PowerShell error message' do
+        let(:secret_script) { "$a = New-PSCredential -User 'foo' -Password 'P4ss#PuppetSensitive'\n$b = New-PSCredential -User 'bar' -Password 'P4ss2#PuppetSensitive'" }
+
+        before do
+          allow(provider).to receive(:ps_script_content).with(resource).and_return(secret_script)
+          allow(provider).to receive(:redact_secrets).with(secret_script)
+          allow(provider).to receive(:remove_secret_identifiers).with(secret_script).and_return(secret_script)
+        end
+
+        it 'adds its first line only, without the quoted script lines' do
+          errormessage = "A positional parameter cannot be found.\n\rAt line:2 char:6\r\n+ $b = New-PSCredential -User bar -Password 'P4 ..."
+          allow(ps_manager).to receive(:execute).with(secret_script, nil).and_return({ stdout: nil, errormessage: errormessage })
+          expect(context).to receive(:err).with('Nothing returned. A positional parameter cannot be found.')
+          expect(result).to be_nil
+        end
+
+        it 'redacts the secrets of the script, the longest first' do
+          allow(ps_manager).to receive(:execute).with(secret_script, nil).and_return({ stdout: nil, errormessage: "Bad value 'P4ss2' and 'P4ss'" })
+          expect(context).to receive(:err).with("Nothing returned. Bad value '#<Sensitive [value redacted]>' and '#<Sensitive [value redacted]>'")
+          expect(result).to be_nil
+        end
       end
     end
 

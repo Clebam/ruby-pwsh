@@ -1670,19 +1670,20 @@ class Puppet::Provider::DscBaseProvider # rubocop:disable Metrics/ClassLength
     handle_secrets(text, "'#<Sensitive [value redacted]>'", "Unredacted sensitive data would've been leaked")
   end
 
-  # Builds the error of a DSC call which returned no data, with the PowerShell error message when there is one
-  # (such as a parse error, which quotes the failing line). Every secret value written into the script is
-  # replaced in that message, so that it can be logged.
+  # Builds the error of a DSC call which returned no data, with the first line of the PowerShell error message
+  # when there is one. The next lines of a parse error quote the failing script line, possibly cut in the middle
+  # of a secret: they are dropped. Every secret value written into the script is also replaced in the kept line,
+  # the longest first so that a secret containing another one is not partly left.
   #
   # @param errormessage [String] the error message returned by the PowerShell manager, if any
   # @param script_content [String] the script, with its secrets still marked by SECRET_POSTFIX
   # @return [String] the error to log
   def nothing_returned_message(errormessage, script_content)
-    return 'Nothing returned.' if errormessage.nil? || errormessage.empty?
+    first_line = errormessage.to_s.split(/\r?\n|\r/).find { |line| !line.strip.empty? }
+    return 'Nothing returned.' if first_line.nil?
 
-    redacted = script_content.scan(SECRET_DATA_REGEX).flatten.compact.uniq.reduce(errormessage) do |text, secret|
-      text.gsub(secret, '#<Sensitive [value redacted]>')
-    end
+    secrets = script_content.scan(SECRET_DATA_REGEX).flatten.compact.uniq.sort_by { |secret| -secret.length }
+    redacted = secrets.reduce(first_line.strip) { |text, secret| text.gsub(secret, '#<Sensitive [value redacted]>') }
     "Nothing returned. #{redacted}"
   end
 
